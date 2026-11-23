@@ -1,0 +1,4 @@
+{
+  "protectedTargetPrefixes": ["dev/", "feature/", "fix/"],
+  "allowedSourceRoots": ["release"]
+}

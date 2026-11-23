@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""Check merge sources on local development branches before running Git."""
+
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+
+ROOT = Path(__file__).resolve().parents[1]
+GIT = (ROOT / "runtime" / "git-path").read_text().strip()
+GLOBAL_VALUE_OPTIONS = {
+    "-C", "-c", "--config-env", "--git-dir", "--work-tree",
+    "--namespace", "--super-prefix", "--attr-source",
+}
+VALUE_OPTIONS = {
+    "-m", "-F", "-s", "-X", "--message", "--file", "--strategy",
+    "--strategy-option", "--cleanup", "--depth", "--deepen",
+    "--shallow-since", "--shallow-exclude", "--filter", "--jobs", "-j",
+    "--negotiation-tip", "--server-option", "-o", "--upload-pack",
+}
+FLAG_OPTIONS = {
+    "-q", "-v", "-e", "-n", "-S", "--quiet", "--verbose", "--progress",
+    "--no-progress", "--ff", "--no-ff", "--ff-only", "--commit",
+    "--no-commit", "--squash", "--no-squash", "--stat", "--no-stat",
+    "--edit", "--no-edit", "--signoff", "--no-signoff", "--gpg-sign",
+    "--no-gpg-sign", "--log", "--no-log", "--verify", "--no-verify",
+    "--verify-signatures", "--no-verify-signatures", "--autostash",
+    "--no-autostash", "--rebase", "--no-rebase", "--atomic", "--all",
+    "--prune", "--no-prune", "--tags", "--no-tags", "--force", "-f",
+    "--recurse-submodules", "--no-recurse-submodules", "--update-shallow",
+    "--unshallow", "--allow-unrelated-histories",
+}
+INLINE_VALUE_OPTIONS = VALUE_OPTIONS | {
+    "--gpg-sign", "--log", "--rebase", "--recurse-submodules",
+}
+SYNC_OPTIONS = {"--ff-only", "--no-rebase", "-q", "-v", "--quiet", "--verbose"}
+
+
+def reject(message):
+    sys.exit(f"Git 分支保护：{message}")
+
+
+def run_git(global_args, *args):
+    result = subprocess.run(
+        [GIT, *global_args, *args], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL
+    )
+    return os.fsdecode(result.stdout).splitlines() if result.returncode == 0 else []
+
+
+def split_command(args):
+    """Find the subcommand while retaining Git's repository-selection flags."""
+    index = 0
+    while index < len(args) and args[index].startswith("-"):
+        index += 2 if args[index] in GLOBAL_VALUE_OPTIONS else 1
+    return args[:index], args[index:]
+
+
+def split_options(args):
+    """Find positional sources without mistaking option values for branch names."""
+    options, sources = [], []
+    arguments = iter(args)
+    for arg in arguments:
+        if arg == "--":
+            sources.extend(arguments)
+            break
+        if not arg.startswith("-"):
+            sources.append(arg)
+        elif arg in VALUE_OPTIONS:
+            value = next(arguments, None)
+            if value is None:
+                reject(f"{arg} 缺少参数")
+            options.extend((arg, value))
+        elif arg in FLAG_OPTIONS or (
+            "=" in arg and arg.split("=", 1)[0] in INLINE_VALUE_OPTIONS
+        ):
+            options.append(arg)
+        else:
+            reject(f"无法核验参数 {arg}，请使用完整的 Git 选项名和显式分支")
+    return options, sources
+
+
+def is_release(branch):
+    return branch.split("/", 1)[0].casefold() in merge_policy()["allowedSourceRoots"]
+
+
+def merge_policy():
+    return json.loads((ROOT / "rules" / "git" / "merge-policy.json").read_text())
+
+
+def release_ref(ref):
+    if ref.startswith("refs/heads/"):
+        return is_release(ref.removeprefix("refs/heads/"))
+    if ref.startswith("refs/remotes/"):
+        remote_and_branch = ref.removeprefix("refs/remotes/").split("/", 1)
+        return len(remote_and_branch) == 2 and is_release(remote_and_branch[1])
+    return False
+
+
+def guarded_merge(global_args, args):
+    if args in (["--abort"], ["--quit"], ["--continue"]):
+        # These commands operate on the merge already recorded by Git.
+        return args
+    options, sources = split_options(args)
+    if len(sources) != 1:
+        reject("请明确指定一个 Release 分支，例如 git merge origin/release")
+    refs = run_git(
+        global_args, "rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", sources[0]
+    )
+    if len(refs) != 1 or not release_ref(refs[0]):
+        reject(f"开发分支仅允许合入 Release 分支，已拦截 {sources[0]}")
+    return [*options, "--", refs[0]]
+
+
+def guarded_pull(global_args, branch, args):
+    """Pin the pull to an allowed branch name on a configured remote."""
+    options, sources = split_options(args)
+    if len(sources) > 2:
+        reject("请明确指定一个远程分支")
+    upstream_remote = run_git(global_args, "config", "--get", f"branch.{branch}.remote")
+    upstream_ref = run_git(global_args, "config", "--get-all", f"branch.{branch}.merge")
+    if len(sources) == 2:
+        remote, source = sources
+        ref = "refs/heads/" + source.removeprefix("refs/heads/")
+    elif len(upstream_remote) == 1 and len(upstream_ref) == 1 and (
+        not sources or sources == upstream_remote
+    ):
+        remote, ref = upstream_remote[0], upstream_ref[0]
+    else:
+        reject("请用 git pull <远端> <Release 分支>，或设置单一上游分支")
+    if not ref.startswith("refs/heads/") or run_git(
+        global_args, "check-ref-format", "--normalize", ref
+    ) != [ref]:
+        reject(f"无法核验远程分支 {ref}")
+    if remote != "." and remote not in run_git(global_args, "remote"):
+        reject(f"请使用已配置的远端，当前值为 {remote}")
+    if release_ref(ref):
+        return [*options, "--", remote, ref]
+    if upstream_remote == [remote] and upstream_ref == [ref] and ref == f"refs/heads/{branch}":
+        if set(options) <= SYNC_OPTIONS:
+            return [*options, "--no-rebase", "--ff-only", "--", remote, ref]
+        reject("同步同名上游分支仅支持快进，请使用 git pull --ff-only")
+    reject(f"开发分支仅允许合入 Release 分支，已拦截 {remote}/{ref.removeprefix('refs/heads/')}")
+
+
+def check_merge_source(global_args, command):
+    """Apply the installed merge policy to the current development branch."""
+    refs = run_git(global_args, "symbolic-ref", "--quiet", "HEAD")
+    prefixes = tuple(
+        f"refs/heads/{prefix}" for prefix in merge_policy()["protectedTargetPrefixes"]
+    )
+    if len(refs) != 1 or not refs[0].startswith(prefixes):
+        return command
+    branch = refs[0].removeprefix("refs/heads/")
+    if command[0] == "merge":
+        return ["merge", *guarded_merge(global_args, command[1:])]
+    return ["pull", *guarded_pull(global_args, branch, command[1:])]
+
+
+def with_commit_hooks(global_args):
+    """Attach the global checks to this commit and forward its existing hooks."""
+    hook_dir = ROOT / "hooks"
+    previous = run_git(global_args, "rev-parse", "--path-format=absolute", "--git-path", "hooks")
+    if not previous:
+        return global_args
+    if Path(previous[0]).resolve() != hook_dir:
+        os.environ["CODE_FLOW_LINT_PREVIOUS_HOOKS"] = previous[0]
+    return [*global_args, "-c", f"core.hooksPath={hook_dir}"]
+
+
+def main():
+    """Guard the Git operations that can run the configured checks."""
+    global_args, command = split_command(sys.argv[1:])
+    if command and command[1:] not in (["--help"], ["-h"]):
+        if command[0] in {"merge", "pull"}:
+            command = check_merge_source(global_args, command)
+        elif command[0] == "commit":
+            global_args = with_commit_hooks(global_args)
+    os.execv(GIT, [GIT, *global_args, *command])
+
+
+if __name__ == "__main__":
+    main()

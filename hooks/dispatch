@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+hook_name=${0##*/}
+hook_dir=${0%/*}
+previous_dir=${CODE_FLOW_LINT_PREVIOUS_HOOKS:-}
+
+# Git supplies the actual commit index here, including for git commit -a and
+# partial commits. This hook also runs when the caller uses --no-verify.
+if [ "$hook_name" = prepare-commit-msg ]; then
+    "$hook_dir/../bin/code-flow-lint" --staged
+fi
+
+if [ -n "$previous_dir" ] && [ -x "$previous_dir/$hook_name" ]; then
+    exec "$previous_dir/$hook_name" "$@"
+fi

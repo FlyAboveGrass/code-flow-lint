@@ -1,0 +1,12 @@
+{
+  "name": "code-flow-lint",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {"node": "^20.19.0 || ^22.13.0 || >=24"},
+  "dependencies": {
+    "eslint": "10.15.0",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.73.0"
+  }
+}
