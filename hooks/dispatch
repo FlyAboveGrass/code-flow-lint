@@ -5,6 +5,50 @@ hook_name=${0##*/}
 hook_dir=${0%/*}
 previous_dir=${CODE_FLOW_LINT_PREVIOUS_HOOKS:-}
 
+# A reference transaction is emitted for both regular and fast-forward
+# merges. The wrapper has already resolved the source to a canonical ref.
+if [ "$hook_name" = reference-transaction ] && [ "${1:-}" = prepared ]; then
+    operation=${CODE_FLOW_LINT_OPERATION:-}
+    source_ref=${CODE_FLOW_LINT_SOURCE_REF:-}
+    if [ "$operation" = merge ] || [ "$operation" = pull ] || [ "$operation" = update-ref ]; then
+        git_path_file="$hook_dir/../runtime/git-path"
+        policy_file="$hook_dir/../rules/git/merge-policy.json"
+        git_bin=$(cat "$git_path_file")
+        current_ref=$($git_bin symbolic-ref --quiet HEAD 2>/dev/null || true)
+        current_branch=${current_ref#refs/heads/}
+        allowed=0
+        source_branch=$source_ref
+        case "$source_branch" in
+            refs/heads/*) source_branch=${source_branch#refs/heads/} ;;
+            refs/remotes/*/*) source_branch=${source_branch#refs/remotes/*/} ;;
+        esac
+        if [ "$operation" = update-ref ]; then
+            allowed=0
+        elif [ "$operation" = pull ] && [ "${CODE_FLOW_LINT_ALLOW_SAME_BRANCH:-}" = 1 ] \
+            && [ "$source_branch" = "$current_branch" ]; then
+            allowed=1
+        elif [ -n "$source_branch" ] && python3 - "$policy_file" "$source_branch" <<'PY'
+import json
+import sys
+
+policy, branch = sys.argv[1:]
+root = branch.split('/', 1)[0].casefold()
+with open(policy, encoding='utf-8') as handle:
+    allowed = json.load(handle)['allowedSourceRoots']
+raise SystemExit(0 if root in {item.casefold() for item in allowed} else 1)
+PY
+        then
+            allowed=1
+        fi
+        while IFS=' ' read -r old new ref; do
+            if [ "$ref" = "$current_ref" ] && [ "$allowed" -ne 1 ]; then
+                echo "Git 分支保护：引用事务拒绝了非 Release 来源 $source_ref" >&2
+                exit 1
+            fi
+        done
+    fi
+fi
+
 # Git supplies the actual commit index here, including for git commit -a and
 # partial commits. This hook also runs when the caller uses --no-verify.
 if [ "$hook_name" = prepare-commit-msg ]; then

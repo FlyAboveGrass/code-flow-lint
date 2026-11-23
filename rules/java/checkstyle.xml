@@ -7,11 +7,23 @@
     <module name="TreeWalker">
         <module name="RedundantImport"/>
         <module name="UnusedImports"/>
+        <module name="RegexpSinglelineJava">
+            <property name="format" value="(?:==|!=)\s*null\b"/>
+            <property name="ignoreComments" value="true"/>
+            <property name="message"
+                value="Use Objects.isNull or Objects.nonNull instead of a direct null comparison."/>
+        </module>
+        <module name="RegexpSinglelineJava">
+            <property name="format" value="^\s*@Data\b"/>
+            <property name="ignoreComments" value="true"/>
+            <property name="message"
+                value="DTO and DO classes must use explicit Lombok annotations instead of @Data."/>
+        </module>
         <module name="MatchXpath">
             <property name="query"
-                value="//EXPR//DOT[IDENT[matches(@text, '^[A-Z]')]][DOT/descendant::IDENT[1][matches(@text, '^(java|javax|jakarta)$')]]"/>
+                value="//DOT[ancestor::TYPE or ancestor::EXPR][not(ancestor::DOT[ancestor::TYPE or ancestor::EXPR])][count(descendant::IDENT) &gt;= 3][descendant::IDENT[matches(@text, '^[a-z]')]][descendant::IDENT[matches(@text, '^[A-Z]')]]"/>
             <message key="matchxpath.match"
-                value="Import the Java type and use its simple name in expressions."/>
+                value="Import the Java type at the top of the file and use its simple name."/>
         </module>
     </module>
 </module>

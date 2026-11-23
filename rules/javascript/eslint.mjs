@@ -5,6 +5,7 @@ export default {
   rules: {
     'no-debugger': 'error',
     'no-dupe-keys': 'error',
+    'no-nested-ternary': 'error',
     'no-unreachable': 'error',
   },
 }

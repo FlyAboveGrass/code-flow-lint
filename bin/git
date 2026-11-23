@@ -144,39 +144,53 @@ def guarded_pull(global_args, branch, args):
     reject(f"开发分支仅允许合入 Release 分支，已拦截 {remote}/{ref.removeprefix('refs/heads/')}")
 
 
-def check_merge_source(global_args, command):
-    """Apply the installed merge policy to the current development branch."""
-    refs = run_git(global_args, "symbolic-ref", "--quiet", "HEAD")
-    prefixes = tuple(
-        f"refs/heads/{prefix}" for prefix in merge_policy()["protectedTargetPrefixes"]
-    )
-    if len(refs) != 1 or not refs[0].startswith(prefixes):
-        return command
-    branch = refs[0].removeprefix("refs/heads/")
-    if command[0] == "merge":
-        return ["merge", *guarded_merge(global_args, command[1:])]
-    return ["pull", *guarded_pull(global_args, branch, command[1:])]
-
-
-def with_commit_hooks(global_args):
-    """Attach the global checks to this commit and forward its existing hooks."""
+def hook_context(global_args):
+    """Make the global hooks run while retaining the project's hook directory."""
     hook_dir = ROOT / "hooks"
     previous = run_git(global_args, "rev-parse", "--path-format=absolute", "--git-path", "hooks")
-    if not previous:
-        return global_args
-    if Path(previous[0]).resolve() != hook_dir:
+    if previous and Path(previous[0]).resolve() != hook_dir:
         os.environ["CODE_FLOW_LINT_PREVIOUS_HOOKS"] = previous[0]
     return [*global_args, "-c", f"core.hooksPath={hook_dir}"]
 
 
 def main():
     """Guard the Git operations that can run the configured checks."""
+    os.environ.pop("CODE_FLOW_LINT_OPERATION", None)
+    os.environ.pop("CODE_FLOW_LINT_SOURCE_REF", None)
     global_args, command = split_command(sys.argv[1:])
     if command and command[1:] not in (["--help"], ["-h"]):
         if command[0] in {"merge", "pull"}:
-            command = check_merge_source(global_args, command)
+            head = run_git(global_args, "symbolic-ref", "--quiet", "HEAD")
+            protected = tuple(
+                f"refs/heads/{prefix}"
+                for prefix in merge_policy()["protectedTargetPrefixes"]
+            )
+            if len(head) == 1 and head[0].startswith(protected):
+                global_args = hook_context(global_args)
+                branch = head[0].removeprefix("refs/heads/")
+                checked = (
+                    guarded_merge(global_args, command[1:])
+                    if command[0] == "merge"
+                    else guarded_pull(global_args, branch, command[1:])
+                )
+                command = [command[0], *checked]
+                if "--" in checked:
+                    source_index = checked.index("--") + (1 if command[0] == "merge" else 2)
+                    os.environ["CODE_FLOW_LINT_OPERATION"] = command[0]
+                    os.environ["CODE_FLOW_LINT_SOURCE_REF"] = checked[source_index]
+                    if command[0] == "pull" and checked[source_index] == f"refs/heads/{branch}":
+                        os.environ["CODE_FLOW_LINT_ALLOW_SAME_BRANCH"] = "1"
         elif command[0] == "commit":
-            global_args = with_commit_hooks(global_args)
+            global_args = hook_context(global_args)
+        elif command[0] == "update-ref":
+            head = run_git(global_args, "symbolic-ref", "--quiet", "HEAD")
+            protected = tuple(
+                f"refs/heads/{prefix}"
+                for prefix in merge_policy()["protectedTargetPrefixes"]
+            )
+            if len(head) == 1 and head[0].startswith(protected):
+                global_args = hook_context(global_args)
+                os.environ["CODE_FLOW_LINT_OPERATION"] = "update-ref"
     os.execv(GIT, [GIT, *global_args, *command])
 
 
