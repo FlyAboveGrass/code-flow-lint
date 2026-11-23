@@ -157,6 +157,8 @@ def main():
     """Guard the Git operations that can run the configured checks."""
     os.environ.pop("CODE_FLOW_LINT_OPERATION", None)
     os.environ.pop("CODE_FLOW_LINT_SOURCE_REF", None)
+    os.environ.pop("CODE_FLOW_LINT_ALLOW_SAME_BRANCH", None)
+    os.environ.pop("CODE_FLOW_LINT_PREVIOUS_HOOKS", None)
     global_args, command = split_command(sys.argv[1:])
     if command and command[1:] not in (["--help"], ["-h"]):
         if command[0] in {"merge", "pull"}:
