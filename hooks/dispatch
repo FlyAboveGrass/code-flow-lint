@@ -34,8 +34,8 @@ import sys
 policy, branch = sys.argv[1:]
 root = branch.split('/', 1)[0].casefold()
 with open(policy, encoding='utf-8') as handle:
-    allowed = json.load(handle)['allowedSourceRoots']
-raise SystemExit(0 if root in {item.casefold() for item in allowed} else 1)
+    forbidden = json.load(handle)['forbiddenSourceRoots']
+raise SystemExit(1 if root in {item.casefold() for item in forbidden} else 0)
 PY
         then
             allowed=1
