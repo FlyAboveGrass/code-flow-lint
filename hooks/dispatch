@@ -42,7 +42,7 @@ PY
         fi
         while IFS=' ' read -r old new ref; do
             if [ "$ref" = "$current_ref" ] && [ "$allowed" -ne 1 ]; then
-                echo "Git 分支保护：引用事务拒绝了非 Release 来源 $source_ref" >&2
+                echo "Git 分支保护：引用事务拒绝了未配置的来源 $source_ref" >&2
                 exit 1
             fi
         done

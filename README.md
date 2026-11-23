@@ -22,7 +22,7 @@ command -v git
 
 | 位置 | 运行时检查 |
 | --- | --- |
-| `rules/git/merge-policy.json` | `dev/*`、`feature/*`、`fix/*` 上的 `git merge` 和 `git pull` 只接受 `release` 或 `release/*`，分支根名称忽略大小写。同名上游同步只允许快进。 |
+| `rules/git/merge-policy.json` | `dev/*`、`feature/*`、`fix/*` 上的 `git merge` 和 `git pull` 只接受 `release`、`release/*`、`master`、`master/*`、`main` 或 `main/*`，分支根名称忽略大小写。同名上游同步只允许快进。 |
 | `rules/java/checkstyle.xml` | 未使用和冗余的导入，使用处的 Java 全限定类型，直接 `== null` / `!= null`，以及 `@Data`。类型必须先在文件顶部导入再使用。 |
 | `rules/javascript/eslint.mjs` | `.js`、`.jsx`、`.mjs`、`.cjs` 中的 `debugger`、重复对象键、不可达代码和嵌套三元表达式。 |
 | `rules/typescript/eslint.mjs` | `.ts`、`.tsx`、`.mts`、`.cts` 中的同类问题、数组空项和嵌套三元表达式。 |
@@ -32,7 +32,7 @@ command -v git
 ## 日常使用
 
 ```sh
-git merge origin/release
+git merge origin/main
 code-flow-lint --staged
 code-flow-lint src/main.ts src/App.java
 ```

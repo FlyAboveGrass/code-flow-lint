@@ -81,7 +81,7 @@ def split_options(args):
     return options, sources
 
 
-def is_release(branch):
+def is_allowed_source(branch):
     return branch.split("/", 1)[0].casefold() in merge_policy()["allowedSourceRoots"]
 
 
@@ -89,12 +89,12 @@ def merge_policy():
     return json.loads((ROOT / "rules" / "git" / "merge-policy.json").read_text())
 
 
-def release_ref(ref):
+def allowed_source_ref(ref):
     if ref.startswith("refs/heads/"):
-        return is_release(ref.removeprefix("refs/heads/"))
+        return is_allowed_source(ref.removeprefix("refs/heads/"))
     if ref.startswith("refs/remotes/"):
         remote_and_branch = ref.removeprefix("refs/remotes/").split("/", 1)
-        return len(remote_and_branch) == 2 and is_release(remote_and_branch[1])
+        return len(remote_and_branch) == 2 and is_allowed_source(remote_and_branch[1])
     return False
 
 
@@ -104,12 +104,12 @@ def guarded_merge(global_args, args):
         return args
     options, sources = split_options(args)
     if len(sources) != 1:
-        reject("请明确指定一个 Release 分支，例如 git merge origin/release")
+        reject("请明确指定一个允许来源分支，例如 git merge origin/main")
     refs = run_git(
         global_args, "rev-parse", "--symbolic-full-name", "--verify", "--end-of-options", sources[0]
     )
-    if len(refs) != 1 or not release_ref(refs[0]):
-        reject(f"开发分支仅允许合入 Release 分支，已拦截 {sources[0]}")
+    if len(refs) != 1 or not allowed_source_ref(refs[0]):
+        reject(f"开发分支仅允许合入配置的来源分支，已拦截 {sources[0]}")
     return [*options, "--", refs[0]]
 
 
@@ -128,20 +128,20 @@ def guarded_pull(global_args, branch, args):
     ):
         remote, ref = upstream_remote[0], upstream_ref[0]
     else:
-        reject("请用 git pull <远端> <Release 分支>，或设置单一上游分支")
+        reject("请用 git pull <远端> <允许来源分支>，或设置单一上游分支")
     if not ref.startswith("refs/heads/") or run_git(
         global_args, "check-ref-format", "--normalize", ref
     ) != [ref]:
         reject(f"无法核验远程分支 {ref}")
     if remote != "." and remote not in run_git(global_args, "remote"):
         reject(f"请使用已配置的远端，当前值为 {remote}")
-    if release_ref(ref):
+    if allowed_source_ref(ref):
         return [*options, "--", remote, ref]
     if upstream_remote == [remote] and upstream_ref == [ref] and ref == f"refs/heads/{branch}":
         if set(options) <= SYNC_OPTIONS:
             return [*options, "--no-rebase", "--ff-only", "--", remote, ref]
         reject("同步同名上游分支仅支持快进，请使用 git pull --ff-only")
-    reject(f"开发分支仅允许合入 Release 分支，已拦截 {remote}/{ref.removeprefix('refs/heads/')}")
+    reject(f"开发分支仅允许合入配置的来源分支，已拦截 {remote}/{ref.removeprefix('refs/heads/')}")
 
 
 def hook_context(global_args):
